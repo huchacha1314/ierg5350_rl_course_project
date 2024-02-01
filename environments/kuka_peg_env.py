@@ -194,7 +194,7 @@ class KukaPegInsertionGymEnv(SRLGymEnv):
                                     ]
         else:
             self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.state_dim,), dtype=np.float32)
-    #将机械臂的位置，关节信息等特征信息组合->用于状态表示学习SRL的咋´状态表示
+    #将机械臂的位置joint position 关节信息等特征信息组合->用于状态表示学习SRL的咋´状态表示
     def getSRLState(self, observation):
         state = []
         if self.srl_model in ["ground_truth", "joints_position"]:
