@@ -1,3 +1,11 @@
+#需要弄清楚的问题有#
+（1）force[] torque[] 是什么
+（2）Net input output 
+（3）Reward 的定义
+
+#environment folder下 kuka_peg_env.py pybullet 模拟 peg in hole环境
+详细解释在kuka_peg_env.py
+
 # Reinforcement Learning of Peg Insertion Robot Arm Agent with Multimodal Sensor Fusion 
 
 A prelimilary version of the python implementation. The code is not well organized currently. 
