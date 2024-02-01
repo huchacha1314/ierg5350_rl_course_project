@@ -1,6 +1,16 @@
 #需要弄清楚的问题有#
 （1）force[] torque[] 是什么
-（2）Net input output 
+（2）Net 
+    Input  
+        color image (224,224,3)
+        depth image(224,224,1)
+        sensor reading(6,1)
+    Output
+        (mini-batch-size,1)
+        动作对数概率（(mini-batch-size,1)）
+    Loss
+        Policy Loss+Value Loss+Negative Entropy
+  
 （3）Reward 的定义
 
 #environment folder下 kuka_peg_env.py pybullet 模拟 peg in hole环境
