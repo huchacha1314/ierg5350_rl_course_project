@@ -9,7 +9,7 @@ from gym import spaces
 
 import cv2
 import matplotlib.pyplot as plt
-
+# 重置/仿真步进/计算奖励
 from environments.srl_env import SRLGymEnv
 
 from environments import kuka_env as kuka
@@ -50,7 +50,7 @@ def getGlobals():
 # TODO: improve the physics of the button
 
 """
-Gym wrapper for Kuka arm RL
+ wrapper for Kuka arm RL
 """
 
 
@@ -86,7 +86,7 @@ class KukaPegInsertionGymEnv(SRLGymEnv):
                  name="kuka_peg_gym",
                  max_distance=0.8,
                  action_repeat=2,
-                 shape_reward=False,
+                 shape_=False,
                  action_joints=False,
                  record_data=False,
                  random_target=False,
@@ -113,7 +113,7 @@ class KukaPegInsertionGymEnv(SRLGymEnv):
         self._cam_pitch = -16
         self._cam_roll = 0
         self._max_distance = max_distance
-        self._shape_reward = shape_reward
+        self._shape_ = shape_
         self._random_target = random_target
         self._force_down = force_down
         self.camera_target_pos = (0.4, 0, 0.2)
@@ -194,7 +194,7 @@ class KukaPegInsertionGymEnv(SRLGymEnv):
                                     ]
         else:
             self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.state_dim,), dtype=np.float32)
-
+    #将机械臂的位置，关节信息等特征信息组合->用于状态表示学习SRL的咋´状态表示
     def getSRLState(self, observation):
         state = []
         if self.srl_model in ["ground_truth", "joints_position"]:
@@ -233,7 +233,7 @@ class KukaPegInsertionGymEnv(SRLGymEnv):
         :return: ([float]) Position (x, y, z) of kuka gripper
         """
         return p.getLinkState(self._kuka.kuka_uid, self._kuka.kuka_gripper_index)[0]
-
+    #为新的epoisode初始化新环境，随机化机械臂初始化位置
     def reset(self):
         self.terminated = False
         self.n_contacts = 0
@@ -314,7 +314,7 @@ class KukaPegInsertionGymEnv(SRLGymEnv):
     def getExtendedObservation(self):
         self._observation = self.render()
         return self._observation
-
+    #将动作应用于机械臂，模拟物理过程，返回观察，奖励和终止状态
     def step(self, action):
 
         # if you choose to do nothing
@@ -402,7 +402,7 @@ class KukaPegInsertionGymEnv(SRLGymEnv):
             return self.getSRLState(self._observation), reward, done, {}
 
         return self._observation, reward, done, {}
-
+    #生成RGB和深度图 进行可视化
     def render(self, close=False):
         # render the rgb and depth image
         camera_target_pos = self.camera_target_pos
@@ -460,13 +460,16 @@ class KukaPegInsertionGymEnv(SRLGymEnv):
         # render the F/T sensor data
 
         return rgb_array_res, depth_array1, ft_reading, pos
-
+    #设置终止条件
+    #(1)>MAX_STEPS
+    #(2)达到接触阈值
+    #(3)机械臂超出边界
     def _termination(self):
         if self.terminated or self._env_step_counter > self.max_steps:
             self._observation = self.getExtendedObservation()
             return True
         return False
-
+    #基于机械臂与目标的距离，于按钮 和箱子的接触，机械臂是否在安全区域给予奖励
     def _reward(self):
         gripper_pos = self.getArmPos()
         distance = np.linalg.norm(self.button_pos - gripper_pos, 2)
@@ -548,6 +551,7 @@ if __name__ == "__main__":
 
     while True:
         # chosen action randomly
+        #数据循环收集
         action = env.action_space.sample() * 10          # amplify the action
         (color, depth, ft_reading, _), reward, done, _ = env.step(action)
         # print("[Multi-Modal Data Collection]: reward:{}".format(reward))
@@ -560,7 +564,7 @@ if __name__ == "__main__":
         cv2.waitKey(1)
         data_container.update(np.array(ft_reading, ndmin=2))
         dynamic_update.update(x, data_container.y)
-
+        #自监督数据
         self_supervise_data = {
             "color_prev": color_prev,
             "depth_prev": depth_prev,
