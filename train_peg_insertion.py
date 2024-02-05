@@ -4,6 +4,14 @@ This file implements the train scripts for PPO. You don't need to modify this fi
 -----
 *2020-2021 Term 1, IERG 5350: Reinforcement Learning. Department of Information Engineering, The Chinese University of
 Hong Kong. Course Instructor: Professor ZHOU Bolei. Assignment author: PENG Zhenghao, SUN Hao, ZHAN Xiaohang.*
+创建环境 env=KukaPegInsertionGymEnv
+创建训练环境 trainer = PPOTrainer(env, config)
+获得观察 obs = env.reset()
+    训练 _train(trainer, env, eval_env, config, num_envs, algo, log_dir, False, False)
+    获取数据 obs, reward, done, info, masks, total_episodes, total_steps, episode_rewards = step_envs(
+                    cpu_actions, envs, episode_rewards, reward_recorder, episode_length_recorder, total_steps,
+                    total_episodes, config.device
+                )
 """
 import argparse
 import datetime
@@ -113,7 +121,7 @@ args = parser.parse_args()
 
 
 def train(args):
-    # Verify algorithm and config
+    # Verify algorithm and config 设置训练超参数
     algo = args.algo
     if algo == "PPO":
         config = ppo_config
@@ -124,14 +132,14 @@ def train(args):
     config.entropy_loss_weight = args.entropy
     assert args.env_id in ["cPong-v0", "cCarRacing-v0"], args.env_id
 
-    # Seed the environments and setup torch
+    # Seed the environments and setup torch 设置随机种子 并且初始化环境
     seed = args.seed
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
     torch.set_num_threads(1)
 
-    # Create vectorized environments
+    # Create vectorized environments 创建并行环境
     num_envs = args.num_envs
     env_id = 0
 
@@ -139,7 +147,8 @@ def train(args):
     log_dir = verify_log_dir(args.log_dir, "{}_{}_{}".format(
         env_id, algo, datetime.datetime.now().strftime("%m-%d_%H-%M")
     ))
-
+    
+    #创建环境
     env = KukaPegInsertionGymEnv(renders=False,
                                  srl_model="raw_pixels",
                                  is_discrete=False,
@@ -154,6 +163,8 @@ def train(args):
     else:
         raise ValueError("Unknown algorithm {}".format(algo))
 
+
+    #如果 --restore 加载预训练模型
     if args.restore:
         restore_log_dir = os.path.dirname(args.restore)
         restore_suffix = os.path.basename(args.restore).split("checkpoint-")[1].split(".pkl")[0]
@@ -165,8 +176,11 @@ def train(args):
 
     # Start training
     print("Start training!")
+    #重新加载环境，并返回初始观察obs
+    #通常’reset‘方法在每个episode 的开始调用，将环境重置为初始状态并且获取初始观察
     obs = env.reset()
     # frame_stack_tensor.update(obs)
+    #为新的迭代准备训练的数据结构
     trainer.rollouts.before_update(obs)
 
     try:
@@ -180,6 +194,7 @@ def train(args):
 
 def _train(trainer, envs, eval_envs, config, num_envs, algo, log_dir, tournament, test):
     # Setup some stats helpers
+    #设置了统计的辅助变量
     episode_rewards = np.zeros([num_envs, 1], dtype=np.float)
     total_episodes = total_steps = iteration = 0
     reward_recorder = deque(maxlen=100)
@@ -190,11 +205,16 @@ def _train(trainer, envs, eval_envs, config, num_envs, algo, log_dir, tournament
     total_timer = Timer()
     progress = []
     evaluate_stat = {}
+
+    #当总步数超过最大值的时候跳出循环
     while True:  # Break when total_steps exceeds maximum value
         # ===== Sample Data =====
+        #采样数据
+        # with 在python 中常常和计时器一起工作，用于测量缩紧内的运行时间，进入缩进代码的时候开始计时，退出时结束计时
         with sample_timer:
             for index in range(config.num_steps):
                 # Get action
+                # with 在python 中和上下文管理器一起工作，在进入缩紧程序之前获取数据，在结束缩进程序之后退出，因为在训练阶段 不会进行梯度下降工作
                 with torch.no_grad():
                     values, actions, action_log_prob = trainer.compute_action(trainer.rollouts.get_observation(index))
 
@@ -205,6 +225,7 @@ def _train(trainer, envs, eval_envs, config, num_envs, algo, log_dir, tournament
 
                 # Step the environment
                 # (Check step_envs function, you need to implement it)
+                #执行环境步骤
                 obs, reward, done, info, masks, total_episodes, total_steps, episode_rewards = step_envs(
                     cpu_actions, envs, episode_rewards, reward_recorder, episode_length_recorder, total_steps,
                     total_episodes, config.device
@@ -215,6 +236,7 @@ def _train(trainer, envs, eval_envs, config, num_envs, algo, log_dir, tournament
                     reward.astype(np.float32)).view(-1, 1).to(config.device)
 
                 # Store samples
+                #存储样本
                 if trainer.discrete:
                     actions = actions.view(-1, 1)
 
@@ -227,17 +249,20 @@ def _train(trainer, envs, eval_envs, config, num_envs, algo, log_dir, tournament
                     break
 
         # ===== Process Samples =====
+        #处理样本
         with process_timer:
             with torch.no_grad():
                 next_value = trainer.compute_values(trainer.rollouts.get_observation(-1))
             trainer.rollouts.compute_returns(next_value, config.gamma)
 
         # ===== Update Policy =====
+        #更新策略
         with update_timer:
             policy_loss, value_loss, dist_entropy, total_loss = trainer.update(trainer.rollouts)
             trainer.rollouts.after_update()
 
         # ===== Evaluate Current Policy =====
+        #评估策略
         if eval_envs is not None and iteration % config.eval_freq == 0:
             eval_timer = Timer()
             evaluate_rewards, evaluate_lengths = evaluate(trainer, eval_envs, 20)
@@ -253,6 +278,7 @@ def _train(trainer, envs, eval_envs, config, num_envs, algo, log_dir, tournament
             ))
 
         # ===== Log information =====
+        #记录信息
         if iteration % config.log_freq == 0:
             stats = dict(
                 log_dir=log_dir,
@@ -288,6 +314,8 @@ def _train(trainer, envs, eval_envs, config, num_envs, algo, log_dir, tournament
                     algo, iteration): stats
             })
             progress_path = save_progress(log_dir, progress)
+
+        #跳出循环
 
         if iteration % config.save_freq == 0:
             trainer_path = trainer.save_w(log_dir, "iter{}".format(iteration))
