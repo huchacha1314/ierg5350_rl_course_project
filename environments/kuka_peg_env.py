@@ -165,19 +165,26 @@ class KukaPegInsertionGymEnv(SRLGymEnv):
 
         global CONNECTED_TO_SIMULATOR
         CONNECTED_TO_SIMULATOR = True
-
+        # 如果action_space 是离散空间（类似于 上下左右）
+        #N_DISCRETE_ACTIONS=6 强化学习中可以采用6中不同的离散动作             
         if self._is_discrete:
             self.action_space = spaces.Discrete(N_DISCRETE_ACTIONS)
         else:
+        # 当_is_discrete==False 时，动作空间采取连续空间
             if self.action_joints:
+                #采用 动作的关节角 的设置
                 # 7 angles for the arm rotation, from -1 to 1
                 action_dim = 7
+                #运动的阈值 +-1
                 self._action_bound = 1
             else:
                 # 3 direction for the arm movement, from -1 to 1
+                #采用末端执行器的 运动方向
                 action_dim = 3
                 self._action_bound = 1
             action_high = np.array([self._action_bound] * action_dim)
+
+            ## from gym import space
             self.action_space = spaces.Box(-action_high, action_high, dtype=np.float32)
 
         if self.srl_model == "ground_truth":
@@ -314,21 +321,26 @@ class KukaPegInsertionGymEnv(SRLGymEnv):
     def getExtendedObservation(self):
         self._observation = self.render()
         return self._observation
-    #将动作应用于机械臂，模拟物理过程，返回观察，奖励和终止状态
+    #step（）的功能仅仅适用于判断action space的类型，不同类型的action space 采取不同的进行下一步action的方式，返回real action 传递给step2（）
+    # 输入： 初始化env的action
     def step(self, action):
-
         # if you choose to do nothing
         if action is None:
             if self.action_joints:
+                #如果采用action——joint 的action方式，即，动作方式是连续的action space且 7 个关节轴进行action
+                #不动
                 return self.step2(list(np.array(self._kuka.joint_positions)[:7]) + [0, 0])
             else:
+                #不动
                 return self.step2([0, 0, 0, 0, 0])
 
         self.action = action  # For saver
+        # 如果采用的action space是离散的（6个离散动作集）
         if self._is_discrete:
-            dv = DELTA_V  # velocity per physics step.
+            dv = DELTA_V  # velocity per physics step.DELTA_V = 0.03 
             # Add noise to action
             dv += self.np_random.normal(0.0, scale=NOISE_STD)
+            #进行离散动作，x y 方向上进行移动 速度*action space 中的6个动作
             dx = [-dv, dv, 0, 0, 0, 0][action]
             dy = [0, 0, -dv, dv, 0, 0][action]
             if self._force_down:
@@ -340,13 +352,16 @@ class KukaPegInsertionGymEnv(SRLGymEnv):
             # real_action = [dx, dy, -0.002, da, finger_angle]
             real_action = [dx, dy, dz, 0, finger_angle]
         else:
+            #如果动作空间是连续的，且由7个joints相关
             if self.action_joints:
+                
                 arm_joints = np.array(self._kuka.joint_positions)[:7]
                 d_theta = DELTA_THETA
                 # Add noise to action
                 d_theta += self.np_random.normal(0.0, scale=NOISE_STD_JOINTS)
                 # append [0,0] for finger angles
                 real_action = list(action * d_theta + arm_joints) + [0, 0]  # TODO remove up action
+            #action space只和末端相关
             else:
                 # assert isinstance(action, list), "[KukaEnv]: Error input type, the action must be list."
                 assert len(action) == 3, "[KukaEnv]: Error input length the action length is {}.".format(len(action))
@@ -373,26 +388,29 @@ class KukaPegInsertionGymEnv(SRLGymEnv):
             print(np.array2string(np.array(real_action), precision=2))
 
         return self.step2(real_action)
-
+    #step2 接收来自step（） 的real action
     def step2(self, action):
         """
         :param action:([float])
         """
         # Apply force to the button
+        # 给按钮键 设置可以施加到力的按钮 确保按钮上 施加足够的力
         p.setJointMotorControl2(self.button_uid, BUTTON_GLIDER_IDX, controlMode=p.POSITION_CONTROL, targetPosition=0.1)
 
         # print("[KukaPegInsertionGymEnv]: receive action: ", action)
+        # 重复action的步骤
         for i in range(self._action_repeat):
             self._kuka.applyAction(action)
             p.stepSimulation()
             if self._termination():
                 break
             self._env_step_counter += 1
-
+            
+        # 获取观察
         self._observation = self.getExtendedObservation()
         if self._renders:
             time.sleep(self._timestep)
-
+        # 获取奖励 
         reward = self._reward()
         done = self._termination()
         if self.saver is not None:
@@ -402,6 +420,9 @@ class KukaPegInsertionGymEnv(SRLGymEnv):
             return self.getSRLState(self._observation), reward, done, {}
 
         return self._observation, reward, done, {}
+    
+    
+    
     #生成RGB和深度图 进行可视化
     def render(self, close=False):
         # render the rgb and depth image
@@ -552,7 +573,11 @@ if __name__ == "__main__":
     while True:
         # chosen action randomly
         #数据循环收集
+        #self.action_space = spaces.Box(-action_high, action_high, dtype=np.float32)
+        # gym 中的 Space.Box().sample()
         action = env.action_space.sample() * 10          # amplify the action
+
+        # env = KukaPegInsertionGymEn env.step()
         (color, depth, ft_reading, _), reward, done, _ = env.step(action)
         # print("[Multi-Modal Data Collection]: reward:{}".format(reward))
         # visualize the data
