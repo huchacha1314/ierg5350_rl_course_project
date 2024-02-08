@@ -35,7 +35,14 @@ class BaseTrainer:
         else:
             self.discrete = True
 
+
+        #env.observation_space 会产生不同的数据格式，是因为在 Gym 中，
+        #不同的环境可能具有不同类型和结构的观测空间。
+        #这种多样性是为了适应不同类型的任务和问题，以提供更大的灵活性和通用性
+        ########### 获取特征值的数量 #################################
+        #########################模板###############################
         if isinstance(env.observation_space, gym.spaces.Tuple):
+            #gym.spaces.Tuple 是 Gym 库中用于表示元组空间的一种格式
             num_feats = env.observation_space[0].shape
             self.num_actions = env.action_space[0].n
         elif isinstance(env.observation_space, list):
@@ -51,6 +58,7 @@ class BaseTrainer:
             else:
                 self.num_actions = env.action_space.shape[0]
         self.num_feats = num_feats  # (num channel, width, height)
+        #########################模板###############################
 
         if _test:  # Used for CartPole-v0
             self.model = MLP(num_feats[0], self.num_actions)
@@ -78,7 +86,8 @@ class BaseTrainer:
 
     def update(self, rollout):
         raise NotImplementedError()
-
+        
+    # 将obs转成Tensor格式
     def process_obs(self, obs_in):
         # Change to tensor, change type, add batch dimension for observation.
         obs_out = []
@@ -92,26 +101,43 @@ class BaseTrainer:
             obs_out.append(obs)
 
         return obs_out
-
+    #从神经网络的输出中获取动作和动作的对数概率
+    # deterministic = False 表示生成动作时采用了随机性
     def compute_action(self, obs, deterministic=False):
         obs = self.process_obs(obs)
 
         # [TODO] Get the actions and the log probability of the action from the output of neural network.
         #  Hint: Use proper distribution to help you
-
+        #动作空间离散
         if self.discrete:  # Please use categorical distribution.
+            # training阶段调用 ActorCritic网络
+            # testing 阶段调用 MLP网络
+            #生成动作logits 和 状态 values
             logits, values = self.model(obs)
+            #实例话一个分类分布的对象
+            # dist.sample()可以实现对分类分布中的一次采样
+            # 取值dist.sample().item()
+            # dist.log_prob(dist.sample())可以实现对给定的采样实现对数概率
+            # dist.log_prob(dist.sample()).item()
             dist = Categorical(logits=logits)
             if deterministic:
+                #不进行随机动作采样
+                # 选取其中动作概率最大的action
                 actions = dist.probs.argmax(dim=-1, keepdim=True)
             else:
+                #否则进行随机采样
                 actions = dist.sample()
+            #返回最终的动作 动作对数概率和状态返回
             action_log_probs = dist.log_prob(actions.view(-1))
             actions = actions.view(-1, 1)  # In discrete case only return the chosen action.
-
+            
+        #动作空间连续
         else:  # Please use normal distribution. You should
+            #通过网络得到动作的均值，对数标准差，状态值
             means, log_std, values = self.model(obs)
+            #实例化一个正态分布
             dist = Normal(means, torch.exp(log_std))
+            #对实例化的连续动作空间进行采样
             actions = dist.sample()
 
             actions = actions.view(-1, self.num_actions)
@@ -217,16 +243,25 @@ class ActorCritic(nn.Module):
         #     self.hidden = nn.Linear(256, 100)
         # else:
         #     raise ValueError("We only support input shape (42, 42), or (96, 96) right now.")
+        
+        # SensorFusionEncoder 实例作为特征提取器，并根据需要加载预训练的权重
         self.fusion_encoder = SensorFusionEncoder(device=device, z_dim=input_shape, deterministic=True)
         if encoder_ckpt:
             self.fusion_encoder.load_state_dict(torch.load(encoder_ckpt))
 
         init_ = lambda m: self.layer_init(m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0))
+        #线性层
+        #状态值是在给定状态下，根据当前策略所能达到的期望回报或价值的估计
+        #它表示了在当前状态下，执行当前策略所能得到的长期回报的期望值
+        #它用于评估当前状态的好坏，并用于更新策略，以便更好地选择动作
         self.critic_linear = init_(nn.Linear(input_shape, 1))
 
         init_ = lambda m: self.layer_init(
             m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), gain=0.01
         )
+        #线性层 
+        #在离散动作空间中，actor_linear 输出的是动作的 logits，表示在给定状态下选择每个动作的概率
+        #在连续动作空间中，actor_linear 输出的是动作的均值，表示在给定状态下选择每个动作的期望值
         self.actor_linear = init_(nn.Linear(input_shape, num_actions))
 
         self.train()
