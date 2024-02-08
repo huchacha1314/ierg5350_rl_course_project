@@ -21,12 +21,15 @@ from multimodal.models.base_models.decoders import (
 )
 
 # 实现数据融合
-# 将图像、深度图和力传感器数据，并将它们编码成一个低维的多模态特征
+# 将图像、深度图和力传感器数据，并将它们编码成一个低维的多模态特征z
 class SensorFusionEncoder(nn.Module):
     def __init__(self, device, z_dim=128, deterministic=True):
         super().__init__()
+        #生成的特征维度 128
         self.z_dim = z_dim
         self.device = device
+        #deterministic=True 确定性编码
+        #deterministic=False 随机性编码
         self.deterministic = deterministic
 
         self.z_prior_m = torch.nn.Parameter(
@@ -36,37 +39,47 @@ class SensorFusionEncoder(nn.Module):
             torch.ones(1, self.z_dim), requires_grad=False
         )
         self.z_prior = (self.z_prior_m, self.z_prior_v)
-
+        #实例化 ImageEncoder DepthEncoder ForceEncoder
         self.img_encoder = ImageEncoder(self.z_dim)
         self.depth_encoder = DepthEncoder(self.z_dim)
         self.frc_encoder = ForceEncoder(self.z_dim)
 
+        #采取确定性编码
         if deterministic:
             # -----------------------
             # modality fusion network
             # -----------------------
             # 3 Total modalities each (2 * z_dim)
+            # 输入维度 [3*2*z_dim,z_dim]
+            # 3:3个模态 depth rgb force
+            # 2:特征向量 由 均值 方差表示
             self.fusion_fc1 = nn.Sequential(
                 nn.Linear(3 * 2 * self.z_dim, self.z_dim), nn.LeakyReLU(0.1, inplace=True)
             )
             self.fusion_fc2 = nn.Sequential(
                 nn.Linear(self.z_dim, self.z_dim), nn.LeakyReLU(0.1, inplace=True)
             )
-
+        #对权重和偏置进行初始化
         for m in self.modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                # kaiming 正态分布的权重初始化，使每一层的方差保持一致，避免梯度爆炸和提督消失
                 nn.init.kaiming_normal_(m.weight.data)
                 if m.bias is not None:
+                    #偏执置0
                     m.bias.data.zero_()
             elif isinstance(m, nn.BatchNorm2d):
+                #初始权重置1
                 m.weight.data.fill_(1)
+                #初始权重置0
                 m.bias.data.zero_()
-
+    
     def forward(self, vis_in, depth_in, frc_in):
         # assert isinstance(obs_in, tuple), "[SensorFusionEncoder]: Error input, input must be tuple(image, depth and force)"
         # batch size
         if len(vis_in.shape) == 3:
+            # 在vis 3维数据前+ 1维 ‘批次’维度
             vis_in = vis_in.unsqueeze(0)
+            #扩充至4维
             depth_in = depth_in.unsqueeze(2).unsqueeze(0)
             frc_in = frc_in.unsqueeze(1).unsqueeze(0)
 
@@ -81,18 +94,53 @@ class SensorFusionEncoder(nn.Module):
         frc_out = self.frc_encoder(frc_in)
 
         if self.deterministic:
+            '''
+            确定多模态：
+            
+            在确定多模态嵌入中，假设每个模态的编码输出可以直接连接并融合在一起，形成一个统一的表示，而不考虑其具有的概率分布。
+            通常通过线性变换、激活函数等操作将每个模态的编码输出连接并处理，最终得到一个确定性的多模态嵌入。
+
+            '''
 
             # multimodal embedding
+            #串联多模态数据
             mm_f1 = torch.cat([img_out, frc_out, depth_out], 1).squeeze()
+            # 经过两个线性层 进行数据融合 
             mm_f2 = self.fusion_fc1(mm_f1)
             z = self.fusion_fc2(mm_f2)
+            # z是多模态嵌入
 
             return img_out, img_out_convs, depth_out, depth_out_convs, z
         else:
-            # Encoder priors
+            '''
+            随机多模态：
+
+            在随机多模态嵌入中，假设每个模态（例如图像、深度、力传感器数据等）的编码输出都可以看作是一个概率分布，其具有一定的均值和方差。
+            将每个模态的均值和方差连接起来，形成一个整体的多模态分布的参数。
+            然后使用这些参数来融合不同模态的信息，通常通过一些融合策略（例如 product of experts）来获得整体的多模态嵌入。
+            最后，从融合后的分布中采样，得到一个具体的多模态嵌入。
+
+            '''
+            #执行随机多模态嵌入
+            # Encoder priors 
+            #从经验分布中获取先验均值和方差
             mu_prior, var_prior = self.z_prior
 
             # Duplicate prior parameters for each data point in the batch
+            ###### 解释duplicate 方法#########
+            '''
+            tensor = torch.tensor([[1, 2], [3, 4], [5, 6]])
+            duplicated_tensor = duplicate(tensor, 2)
+            将这个张量复制 2 次，即使得每个元素重复 2 次
+            tensor([[1, 2],
+                    [3, 4],
+                    [5, 6],
+                    [1, 2],
+                    [3, 4],
+                    [5, 6]])
+
+            '''
+            #将先验扩充到和batch size 一样的大小，并扩展一个新的维度
             mu_prior_resized = duplicate(mu_prior, batch_dim).unsqueeze(2)
             var_prior_resized = duplicate(var_prior, batch_dim).unsqueeze(2)
 
@@ -111,9 +159,12 @@ class SensorFusionEncoder(nn.Module):
             )
 
             # Fuse modalities mean / variances using product of experts
+            #使用product of experts 算法融合不同模态的均值和方差
+            #得到整体的多模态均值（mu_z）和方差（var_z）
             mu_z, var_z = product_of_experts(m_vect, var_vect)
 
             # Sample Gaussian to get latent
+            # 生成多模态的分布采样
             z = sample_gaussian(mu_z, var_z, self.device)
 
             return img_out_convs, img_out, depth_out_convs, depth_out, z
