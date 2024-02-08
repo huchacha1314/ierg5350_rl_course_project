@@ -11,7 +11,7 @@ import torch
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 import numpy as np
 
-
+#用于一般情况的实现，适用于普通的观测空间
 class PPORolloutStorage:
     def __init__(self, num_steps, num_processes, obs_shape, act_dim, device,
                  use_gae=True, gae_lambda=0.95):
@@ -31,12 +31,14 @@ class PPORolloutStorage:
 
         self.gae = use_gae
         self.gae_lambda = gae_lambda
-
+                     
+    #生成供 PPO 算法使用的训练样本。
+    #通过随机采样的方式，从存储的数据中获取批量的观测、动作、返回值、掩码等数据。
     def feed_forward_generator(self, advantages, mini_batch_size):
         """A generator to provide samples for PPO. PPO run SGD for multiple
         times so we need more efforts to prepare data for it."""
         num_steps, num_processes = self.rewards.size()[0:2]
-        batch_size = num_processes * num_steps
+        batch_size = num_processes * num_steps #样本数量
         sampler = BatchSampler(SubsetRandomSampler(range(batch_size)),
                                mini_batch_size, drop_last=True)
         for indices in sampler:
@@ -51,6 +53,8 @@ class PPORolloutStorage:
             yield observations_batch, actions_batch, return_batch, \
                   masks_batch, old_action_log_probs_batch, adv_targ
 
+    
+    #根据 GAE 算法计算每个时间步的优势值
     def compute_returns(self, next_value, gamma):
         if self.gae:
             self.value_preds[-1] = next_value
@@ -72,7 +76,8 @@ class PPORolloutStorage:
         else:
             # Ignore this part
             raise NotImplementedError("Not for this assignment.")
-
+    #用于向回放缓冲区中插入新的经验数据。
+    #将当前的观测、动作、动作概率、值函数预测、奖励和掩码等信息复制到对应的张量中，并更新步数
     def insert(self, current_obs, action, action_log_prob, value_pred, reward, mask):
         if isinstance(current_obs, np.ndarray):
             current_obs = torch.from_numpy(current_obs.astype(np.uint8))
@@ -83,11 +88,15 @@ class PPORolloutStorage:
         self.rewards[self.step].copy_(reward)
         self.masks[self.step + 1].copy_(mask)
         self.step = (self.step + 1) % self.num_steps
-
+        
+    #用于在模型参数更新后更新回放缓冲区的状态。
+    #将存储的观测和掩码数据进行更新，以保持与环境的同步
     def after_update(self):
         self.observations[0].copy_(self.observations[-1])
         self.masks[0].copy_(self.masks[-1])
-
+    
+    #用于在模型参数更新前更新回放缓冲区的状态。
+    #将传入的观测数据复制到存储的观测张量中，以便在后续的训练中使用
     def before_update(self, obs):
         if isinstance(obs, np.ndarray):
             obs = torch.from_numpy(obs)
@@ -95,6 +104,7 @@ class PPORolloutStorage:
 
 
 # Rollout Storage for Sensor Fus
+#用于特殊情况，适用于具有多个观测空间的情况，比如传感器融合
 class MyPPORolloutStorage:
     def __init__(self, num_steps, num_processes, obs_shapes, act_dim, device,
                  use_gae=True, gae_lambda=0.95):
