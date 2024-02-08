@@ -20,7 +20,8 @@ from multimodal.models.base_models.decoders import (
     ImageDecoder
 )
 
-
+# 实现数据融合
+# 将图像、深度图和力传感器数据，并将它们编码成一个低维的多模态特征
 class SensorFusionEncoder(nn.Module):
     def __init__(self, device, z_dim=128, deterministic=True):
         super().__init__()
@@ -123,7 +124,7 @@ class SensorFusionEncoder(nn.Module):
     def bias_parameters(self):
         return [param for name, param in self.named_parameters() if "bias" in name]
 
-
+# 自监督传感器融合网络，它利用传感器融合编码器的特征表示和动作输入来预测图像重建、深度图重建和接触情况
 class MySensorFusionSelfSupervised(nn.Module):
     def __init__(self, device, z_dim=128, action_dim=3, deterministic=True):
         super().__init__()
@@ -171,7 +172,7 @@ class MySensorFusionSelfSupervised(nn.Module):
 
         return vis_rec, depth_rec, contact_out
 
-
+# 传感器融合网络，它接收图像、深度图、力传感器数据、动作数据，并将它们编码成一个低维的多模态特征表示
 class SensorFusion(nn.Module):
     """
     #
