@@ -96,15 +96,22 @@ class PPOTrainer(BaseTrainer):
         assert dist_entropy.requires_grad
 
         # [TODO] Implement policy loss
+        #######################################################################
+        #是两种策略下动作的概率比，而在程序实现中，用的是对动作分布取对数，而后使用e指数相减的方法
         ratio = torch.exp(action_log_probs.float() - old_action_log_probs_batch.float())
         surr1 = ratio * adv_targ
+        # clamp是torch的截断函数 负责 CLIP
         surr2 = torch.clamp(ratio, min=1.0 - self.clip_param, max=1.0 + self.clip_param) * adv_targ
 
         policy_loss = - torch.min(surr1, surr2).mean()
+        #######################################################################
 
         # [TODO] Implement value loss
+        #######################################################################
         # value_loss = F.mse_loss(return_batch, values)
+        # 累计奖励和预测的均方误差
         value_loss = 0.5 * (return_batch - values).pow(2).mean()
+        #######################################################################
 
         # This is the total loss
         loss = policy_loss + self.config.value_loss_weight * value_loss - self.config.entropy_loss_weight * dist_entropy
@@ -113,6 +120,11 @@ class PPOTrainer(BaseTrainer):
 
     def update(self, rollout):
         # Get the normalized advantages
+        #在强化学习中，advantages（优势）是指在给定策略下，某个状态动作对的预期收益与当前状态的值函数估计之间的差
+        #advantages=returns−value_preds
+        #returns 是回溯中每个时间步的折扣后的累积奖励值（或者是经验中观察到的实际累积奖励值）
+        #value_preds 是回溯中每个时间步的状态值函数的预测值（或者是智能体在当前状态下估计的值函数值）
+        
         advantages = rollout.returns[:-1] - rollout.value_preds[:-1]
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-5)
 
@@ -124,6 +136,7 @@ class PPOTrainer(BaseTrainer):
         # Train for num_sgd_steps iterations (compared to A2C which only
         # train one iteration)
         for e in range(self.num_sgd_steps):
+            #生成用于训练的数据样本生成器
             data_generator = rollout.feed_forward_generator(advantages, self.mini_batch_size)
 
             for sample in data_generator:
